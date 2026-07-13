@@ -54,7 +54,7 @@ test('offline build emits one self-contained privacy-safe HTML file', () => {
   assert.doesNotMatch(html, /<script[^>]+src=/iu);
   assert.doesNotMatch(html, /<link[^>]+rel="stylesheet"/iu);
   assert.doesNotMatch(html, /(?:src|href)=["'](?:assets|vendor|src)\//iu);
-  assert.doesNotMatch(html, /\/Users\/apple|胡天鹏|126913/u);
+  assert.doesNotMatch(html, /\/Users\/USERNAME|REAL_NAME|EMPLOYEE_ID/u);
   assert.ok(size > 3 * 1024 * 1024 && size < 8 * 1024 * 1024);
 });
 ```
@@ -359,7 +359,7 @@ Expected: PDF.js opens the document through the Blob Worker and returns parsed p
 Run:
 
 ```bash
-rg -n '/Users/|胡天鹏|126913|申请单号|20260101-20260710' 钱都去哪了-离线版.html
+rg -n '/Users/|REAL_NAME|EMPLOYEE_ID|APPLICATION_ID|DATE_RANGE' 钱都去哪了-离线版.html
 shasum -a 256 钱都去哪了-离线版.html
 ```
 

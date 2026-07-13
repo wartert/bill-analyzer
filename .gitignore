@@ -19,6 +19,12 @@ site-hosting/
 decrypted_*
 _tmp_*
 
+# 环境变量与密钥（防止误提交 API 密钥）
+.env
+.env.*
+!.env.example
+*.log
+
 # 带完整交易数据的生成物
 analysis_data.json
 categories.local.json

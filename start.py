@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import http.server
+import os
 import socket
 import threading
 import webbrowser
@@ -13,6 +14,44 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+
+# 不允许通过 HTTP 服务暴露的文件/目录
+_SENSITIVE_PATTERNS = [
+    ".env", ".git", "__pycache__", "analysis_data.json", "categories.local.json",
+    "*.csv", "*.xls", "*.xlsx", "*.pdf", "decrypted_", "_tmp_", "report*.html",
+    "boc_report.html", "*.py", ".claude",
+]
+
+def _is_path_safe(request_path: str) -> bool:
+    """检查请求路径是否指向敏感文件"""
+    basename = os.path.basename(request_path)
+    for pattern in _SENSITIVE_PATTERNS:
+        if pattern.startswith("*"):
+            if basename.endswith(pattern[1:]):
+                return False
+        elif pattern in basename or pattern in request_path:
+            return False
+    return True
+
+
+class SafeRequestHandler(http.server.SimpleHTTPRequestHandler):
+    """限制访问敏感文件的自定义 handler"""
+
+    def __init__(self, *args, **kwargs):
+        self.directory = str(ROOT)
+        super().__init__(*args, **kwargs)
+
+    def translate_path(self, path):
+        """拦截对敏感文件的请求"""
+        if not _is_path_safe(path):
+            return os.path.join(self.directory, "__nonexistent__")
+        return super().translate_path(path)
+
+    def log_message(self, format, *args):
+        """精简日志，减少信息泄露"""
+        if "404" in str(args):
+            return
+        super().log_message(format, *args)
 
 
 class LocalOnlyServer(http.server.ThreadingHTTPServer):
@@ -37,9 +76,7 @@ def main() -> None:
     args = parser.parse_args()
 
     port = choose_port(args.port)
-    handler = lambda *handler_args, **handler_kwargs: http.server.SimpleHTTPRequestHandler(  # noqa: E731
-        *handler_args, directory=str(ROOT), **handler_kwargs
-    )
+    handler = SafeRequestHandler  # noqa: E731
     server = LocalOnlyServer(("127.0.0.1", port), handler)
     url = f"http://127.0.0.1:{port}/index.html"
 

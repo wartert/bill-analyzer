@@ -17,6 +17,7 @@
 """
 
 import csv
+import html
 import json
 import sys
 import os
@@ -275,7 +276,7 @@ def parse_csv(filepath):
     return transactions, info
 
 
-def parse_pdf(filepath):
+def parse_pdf(filepath, debug=False):
     """解析银行流水 PDF 文件（使用 pdfplumber 提取表格，失败则按文本行解析）"""
     try:
         import pdfplumber
@@ -334,15 +335,17 @@ def parse_pdf(filepath):
     col_map = map_columns(header)
 
     if "date" not in col_map or "amount" not in col_map:
-        # 打印诊断信息帮助用户排查
-        print(f"  [诊断] 检测到的表头: {header}")
-        print(f"  [诊断] 列映射结果: {col_map}")
-        print(f"  [诊断] 前5行数据:")
-        for i, row in enumerate(all_rows[header_row_idx+1:header_row_idx+6]):
-            print(f"          {row}")
+        if debug:
+            print(f"  [诊断] 检测到的表头: {header}")
+            print(f"  [诊断] 列映射结果: {col_map}")
+            print(f"  [诊断] 数据行（仅显示前 3 列）:")
+            for i, row in enumerate(all_rows[header_row_idx+1:header_row_idx+6]):
+                sanitized = [str(c)[:30] if c else "" for c in row[:3]]
+                print(f"          {sanitized}")
         return [], (
             f"无法自动识别列名。\n"
             f"请确保 PDF 包含日期和金额列，或将 PDF 导出为 CSV 格式。"
+            f"\n（添加 --debug 参数可查看诊断信息）"
         )
 
     # 解析数据行（跳过表头和可能的重复表头）
@@ -605,6 +608,10 @@ def generate_report(transactions, output_path, title="个人账单分析报告")
 def build_html(data):
     """构建 HTML 报告"""
     json_data = json.dumps(data, ensure_ascii=False)
+    # 防止交易数据中的 </script> 标签破坏 HTML 结构
+    json_data_safe = json_data.replace("</", "<\\/")
+    title_safe = html.escape(data["title"])
+    date_range_safe = html.escape(data["dateRange"])
 
     return f'''<!DOCTYPE html>
 <html lang="zh-CN">
@@ -612,8 +619,10 @@ def build_html(data):
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="author" content="tphu">
-<title>{data["title"]}</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<title>{title_safe}</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"
+        integrity="sha384-BQKzmHvQLMCAnL3UtDBA1Al5tFjsCz1wrMlIUA1wkzo14DYkRWjywW+p9pCj0cwd"
+        crossorigin="anonymous"></script>
 <style>
   :root {{
     --bg: #0d1117;
@@ -762,8 +771,8 @@ def build_html(data):
 <body>
 
 <div class="header">
-  <h1>{data["title"]}</h1>
-  <div class="date-range">{data["dateRange"]} | 共 {data["summary"]["incomeCount"] + data["summary"]["expenseCount"]} 笔交易</div>
+  <h1>{title_safe}</h1>
+  <div class="date-range">{date_range_safe} | 共 {data["summary"]["incomeCount"] + data["summary"]["expenseCount"]} 笔交易</div>
 </div>
 
 <div class="summary-grid">
@@ -850,7 +859,7 @@ def build_html(data):
 </div>
 
 <script>
-const REPORT_DATA = {json_data};
+const REPORT_DATA = {json_data_safe};
 
 // 颜色方案
 const COLORS = ['#f85149','#58a6ff','#3fb950','#d29922','#bc8cff','#39c5cf','#ff7b72','#79c0ff','#56d364','#e3b341'];
@@ -985,6 +994,7 @@ def main():
         print("  --output <文件名>    输出 HTML 文件名 (默认: report.html)")
         print("  --title <标题>       报告标题 (默认: 个人账单分析报告)")
         print("  --categories <文件>  自定义分类关键词 JSON 文件")
+        print("  --debug              显示诊断信息（仅用于 PDF 解析故障排查）")
         print()
         print("示例:")
         print('  python analyze.py bank_statement.csv')
@@ -996,6 +1006,7 @@ def main():
     output_file = "report.html"
     title = "个人账单分析报告"
     categories_file = None
+    debug = False
 
     # 解析命令行参数
     i = 2
@@ -1009,19 +1020,25 @@ def main():
         elif sys.argv[i] == "--categories" and i + 1 < len(sys.argv):
             categories_file = sys.argv[i + 1]
             i += 2
+        elif sys.argv[i] == "--debug":
+            debug = True
+            i += 1
         else:
             i += 1
 
-    # 检查文件
-    if not os.path.exists(input_file):
-        print(f"  [错误] 文件不存在: {input_file}")
+    # 检查文件（解析真实路径防止符号链接绕过）
+    input_file = os.path.realpath(input_file)
+    output_file = os.path.realpath(output_file)
+
+    if not os.path.isfile(input_file):
+        print(f"  [错误] 文件不存在或不是普通文件: {input_file}")
         sys.exit(1)
 
     # 1. 解析文件（自动检测 CSV 或 PDF）
     print(f"  [1/3] 读取文件: {input_file}")
     is_pdf = input_file.lower().endswith('.pdf')
     if is_pdf:
-        transactions, info = parse_pdf(input_file)
+        transactions, info = parse_pdf(input_file, debug=debug)
     else:
         transactions, info = parse_csv(input_file)
     if not transactions:

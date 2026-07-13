@@ -6,7 +6,9 @@
 """
 import argparse
 import csv
+import getpass
 import hashlib
+import html
 import io
 import json
 import os
@@ -1010,7 +1012,10 @@ def build_argument_parser():
     parser.add_argument("--bank", type=Path, help="银行流水 PDF")
     parser.add_argument("--wechat", type=Path, help="微信支付官方 XLSX")
     parser.add_argument("--alipay", type=Path, help="支付宝官方 CSV")
-    parser.add_argument("--pdf-password", help="加密银行 PDF 的打开密码（仅保存在当前进程内存）")
+    parser.add_argument("--pdf-password",
+                        help="加密银行 PDF 的打开密码。"
+                             "⚠ 警告：命令行参数对同机其他用户可见（ps 和 shell 历史）。"
+                             "不传此参数时，如 PDF 已加密会通过安全提示交互式输入。")
     parser.add_argument(
         "--self-name", action="append", default=[],
         help="本人账户姓名，可重复传入，用于识别内部转账",
@@ -1046,7 +1051,17 @@ def main(argv=None):
 
     if args.bank:
         print("[1/4] 解析银行流水 PDF...")
-        bank_data = parse_bank_pdf(args.bank, args.pdf_password)
+        pdf_pwd = args.pdf_password
+        try:
+            bank_data = parse_bank_pdf(args.bank, pdf_pwd)
+        except ValueError as exc:
+            if "加密" in str(exc) and not pdf_pwd:
+                pdf_pwd = getpass.getpass("请输入 PDF 打开密码（不会回显）：")
+                if not pdf_pwd:
+                    parser.error("需要密码才能打开加密的 PDF")
+                bank_data = parse_bank_pdf(args.bank, pdf_pwd)
+            else:
+                raise
         all_records.extend(bank_data)
         print(f"      银行卡: {len(bank_data)} 条")
 
@@ -1105,6 +1120,8 @@ def main(argv=None):
 # ============================================================
 def build_html_report(data):
     json_data = json.dumps(data, ensure_ascii=False)
+    # 防止交易数据中的 </script> 标签破坏 HTML 结构
+    json_data_safe = json_data.replace("</", "<\\/")
 
     # 预计算所有模板变量
     m = data["meta"]
@@ -1134,9 +1151,15 @@ def build_html_report(data):
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="author" content="tphu">
 <title>钱都去哪了 · 个人账单报告</title>
-<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"
+        integrity="sha384-BQKzmHvQLMCAnL3UtDBA1Al5tFjsCz1wrMlIUA1wkzo14DYkRWjywW+p9pCj0cwd"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"
+        integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"
+        integrity="sha384-D/t0ZMqQW31H3az8ktEiNb39wyKnS82iFY52QPACM+IjKW3jDUhyIgh2PApRqJZs"
+        crossorigin="anonymous"></script>
 <style>
 :root {{
   --bg: #0a0e14;
@@ -1400,7 +1423,7 @@ tr:hover td {{ background: rgba(255,255,255,0.03); }}
 </div>
 
 <script>
-const D = {json_data};
+const D = {json_data_safe};
 
 // === 渲染辅助 ===
 const COLORS = ['#58a6ff','#3fb950','#f85149','#d29922','#bc8cff','#39c5cf','#f0883e','#79c0ff','#56d364','#e3b341',

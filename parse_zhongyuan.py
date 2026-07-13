@@ -6,6 +6,7 @@
 """
 
 import argparse
+import getpass
 import io
 import sys
 import os
@@ -248,7 +249,10 @@ def categorize_transaction_custom(tx, categories):
 def build_argument_parser():
     parser = argparse.ArgumentParser(description="银行流水 PDF 兼容解析器")
     parser.add_argument("--pdf", required=True, type=Path, help="银行流水 PDF 路径")
-    parser.add_argument("--pdf-password", help="加密 PDF 的打开密码（仅保存在当前进程内存）")
+    parser.add_argument("--pdf-password",
+                        help="加密 PDF 的打开密码。"
+                             "⚠ 警告：命令行参数对同机其他用户可见（ps 和 shell 历史）。"
+                             "不传此参数时，如 PDF 已加密会通过安全提示交互式输入。")
     parser.add_argument("--output", type=Path, default=Path("report_bank.html"), help="HTML 报告路径")
     parser.add_argument("--csv-output", type=Path, help="可选：另存包含交易明细的 CSV")
     parser.add_argument("--categories", type=Path, default=Path("categories_enhanced.json"), help="分类规则 JSON")
@@ -271,7 +275,14 @@ def main(argv=None):
     try:
         working_pdf = decrypt_pdf(args.pdf, args.pdf_password)
     except ValueError as exc:
-        parser.error(str(exc))
+        if "加密" in str(exc) and not args.pdf_password:
+            # 通过安全提示交互式输入密码（不回显，不进 shell 历史）
+            password = getpass.getpass("请输入 PDF 打开密码（不会回显）：")
+            if not password:
+                parser.error("需要密码才能打开加密的 PDF")
+            working_pdf = decrypt_pdf(args.pdf, password)
+        else:
+            parser.error(str(exc))
 
     # Step 2: 提取交易数据
     print("[2/4] 提取交易数据...")
