@@ -25,4 +25,5 @@ output/report*.html
 output/boc_report.html
 output/钱都去哪了-离线版.html
 categories.local.json
+screenshots/
 !share_bill_analyzer.html
