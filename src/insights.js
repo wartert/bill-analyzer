@@ -19,7 +19,9 @@
   function weekdayNumber(date) {
     if (!/^20\d{2}-\d{2}-\d{2}$/u.test(date || '')) return null;
     const [year, month, day] = date.split('-').map(Number);
-    const nativeDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) return null;
+    const nativeDay = parsed.getUTCDay();
     return nativeDay === 0 ? 7 : nativeDay;
   }
 
@@ -38,8 +40,14 @@
 
   function buildWeekPattern(expenses) {
     return {
-      weekday: aggregate(expenses.filter((item) => weekdayNumber(item.date) <= 5)),
-      weekend: aggregate(expenses.filter((item) => weekdayNumber(item.date) >= 6)),
+      weekday: aggregate(expenses.filter((item) => {
+        const weekday = weekdayNumber(item.date);
+        return weekday >= 1 && weekday <= 5;
+      })),
+      weekend: aggregate(expenses.filter((item) => {
+        const weekday = weekdayNumber(item.date);
+        return weekday >= 6 && weekday <= 7;
+      })),
     };
   }
 
