@@ -142,7 +142,7 @@
       .filter((item) => weekdayNumber(item.date) !== null)
       .map((item) => Date.parse(`${item.date}T00:00:00Z`));
     const spanDays = validDates.length
-      ? Math.round((Math.max(...validDates) - Math.min(...validDates)) / 86400000)
+      ? Math.floor((Math.max(...validDates) - Math.min(...validDates)) / 86400000) + 1
       : 0;
     const temporalCount = expenses.filter((item) => bucketFor(item.time)).length;
     const expenseCount = expenses.length;

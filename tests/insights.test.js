@@ -20,7 +20,7 @@ function analysis(transactions, monthly = []) {
 function sufficientCoffeeSample() {
   return Array.from({ length: 12 }, (_, index) => expense(
     `sample-${index}`,
-    index === 11 ? '2026-06-29' : `2026-06-${String(index + 1).padStart(2, '0')}`,
+    index === 11 ? '2026-06-28' : `2026-06-${String(index + 1).padStart(2, '0')}`,
     index < 8 ? '09:00:00' : '',
     10 + index,
     index < 5 ? '瑞幸咖啡' : `商户${index}`,
@@ -247,13 +247,21 @@ test('sample sufficiency requires expense count, valid times and a 28-day span',
   });
 });
 
+test('sample span includes both endpoints and counts a single day as one', () => {
+  const result = Insights.analyzeSpendingProfile(analysis([
+    expense('only', '2026-06-01', '09:00:00', 10),
+  ]));
+
+  assert.equal(result.sample.spanDays, 1);
+});
+
 test('sample is insufficient when any one threshold is missed', () => {
   const tooFewExpenses = sufficientCoffeeSample().slice(0, 11);
   tooFewExpenses[10].date = '2026-06-29';
   const tooFewTimes = sufficientCoffeeSample();
   tooFewTimes[7].time = '';
   const tooShortSpan = sufficientCoffeeSample();
-  tooShortSpan[11].date = '2026-06-28';
+  tooShortSpan[11].date = '2026-06-27';
 
   assert.deepEqual([
     Insights.analyzeSpendingProfile(analysis(tooFewExpenses)).sample.sufficient,
