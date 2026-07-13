@@ -13,11 +13,11 @@
     { id: 'late-night', label: '深夜', matches: (hour) => hour >= 22 || hour <= 5 },
   ];
   const MEAL_SCENES = [
-    { id: 'breakfast', label: '早餐', keywords: ['早餐', '早饭', '早点'] },
-    { id: 'lunch', label: '午餐', keywords: ['午餐', '午饭', '中饭'] },
-    { id: 'dinner', label: '晚餐', keywords: ['晚餐', '晚饭'] },
-    { id: 'delivery', label: '外卖', keywords: ['外卖', '饿了么', '美团配送'] },
-    { id: 'coffee', label: '咖啡', keywords: ['咖啡', 'coffee', '瑞幸', '星巴克', 'manner'] },
+    { id: 'breakfast', label: '早餐', keywords: ['早餐', '早饭', '早点', '包子', '豆浆'] },
+    { id: 'lunch', label: '午餐', keywords: ['午餐', '午饭', '中饭', '食堂'] },
+    { id: 'dinner', label: '晚餐', keywords: ['晚餐', '晚饭', '夜宵'] },
+    { id: 'delivery', label: '外卖', keywords: ['外卖', '饿了么', '美团配送', '美团'] },
+    { id: 'coffee', label: '咖啡饮品', keywords: ['咖啡', 'coffee', '瑞幸', '星巴克', 'manner', '库迪'] },
   ];
 
   const roundMoney = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -85,7 +85,7 @@
     const current = roundMoney(currentEntry.netExpense);
     const previous = roundMoney(previousEntry.netExpense);
     const change = roundMoney(current - previous);
-    const changeRate = previous === 0 ? null : roundMoney((change / previous) * 100);
+    const changeRate = previous > 0 ? roundMoney((change / previous) * 100) : null;
     const [year, month] = currentEntry.month.split('-').map(Number);
     const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
     const lastDate = options.lastDate || analysis.meta?.lastDate || '';

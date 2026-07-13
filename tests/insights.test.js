@@ -146,6 +146,17 @@ test('monthly comparison uses null rate when the previous net expense is zero', 
   assert.equal(result.monthlyComparison.changeRate, null);
 });
 
+test('monthly comparison uses null rate when the previous net expense is negative', () => {
+  const input = analysis([], [
+    { month: '2026-06', netExpense: -100 },
+    { month: '2026-07', netExpense: 300 },
+  ]);
+
+  const result = Insights.analyzeSpendingProfile(input);
+
+  assert.equal(result.monthlyComparison.changeRate, null);
+});
+
 test('monthly comparison skips invalid months and prefers the explicit last date', () => {
   const input = analysis([], [
     { month: '2026-05', netExpense: 100 },
@@ -232,7 +243,28 @@ test('meal scenes use explicit keywords from merchant, description and search te
     { id: 'lunch', label: '午餐', amount: 25, count: 1, average: 25 },
     { id: 'dinner', label: '晚餐', amount: 40, count: 1, average: 40 },
     { id: 'delivery', label: '外卖', amount: 32, count: 1, average: 32 },
-    { id: 'coffee', label: '咖啡', amount: 18, count: 1, average: 18 },
+    { id: 'coffee', label: '咖啡饮品', amount: 18, count: 1, average: 18 },
+  ]);
+});
+
+test('meal scenes cover contract keywords across merchant, description and search text', () => {
+  const delivery = expense('delivery', '2026-07-04', '18:00:00', 31, '即时配送');
+  delivery.searchText = '美团订单';
+  const result = Insights.analyzeSpendingProfile(analysis([
+    expense('bun', '2026-07-01', '08:00:00', 8, '包子铺'),
+    expense('soy-milk', '2026-07-01', '08:10:00', 4, '普通商户', 'food', '豆浆'),
+    expense('canteen', '2026-07-02', '12:00:00', 20, '普通商户', 'food', '公司食堂'),
+    expense('supper', '2026-07-03', '22:00:00', 25, '普通商户', 'food', '夜宵'),
+    delivery,
+    expense('cotti', '2026-07-05', '15:00:00', 16, '库迪'),
+  ]));
+
+  assert.deepEqual(result.mealScenes, [
+    { id: 'breakfast', label: '早餐', amount: 12, count: 2, average: 6 },
+    { id: 'lunch', label: '午餐', amount: 20, count: 1, average: 20 },
+    { id: 'dinner', label: '晚餐', amount: 25, count: 1, average: 25 },
+    { id: 'delivery', label: '外卖', amount: 31, count: 1, average: 31 },
+    { id: 'coffee', label: '咖啡饮品', amount: 16, count: 1, average: 16 },
   ]);
 });
 
