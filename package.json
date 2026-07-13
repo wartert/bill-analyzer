@@ -1,0 +1,16 @@
+{
+  "name": "money-where",
+  "version": "2.0.0",
+  "private": true,
+  "description": "钱都去哪了 — 本地优先的个人账单分析工具",
+  "scripts": {
+    "build": "node scripts/build-static.js",
+    "build:offline": "node scripts/build-offline.js",
+    "build:github-pages": "node scripts/build-github-pages.js",
+    "deploy:cloudflare": "npm run build && npx wrangler deploy",
+    "deploy:temporary": "npm run build && npx wrangler deploy --temporary",
+    "test": "node --test tests/*.test.js",
+    "test:core": "node --test tests/core.test.js tests/parsers.test.js",
+    "test:structure": "node --test tests/structure.test.js"
+  }
+}

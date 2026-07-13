@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="author" content="tphu">
+  <meta name="description" content="钱都去哪了：在浏览器本地整理银行卡、微信支付和支付宝账单，看清真实消费、现金结余与资金流向。">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+  <title>钱都去哪了 · 本地账单分析</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="vendor/echarts.min.js"></script>
+  <script defer src="vendor/papaparse.min.js"></script>
+  <script defer src="vendor/xlsx.full.min.js"></script>
+  <script defer src="vendor/pdf.bundle.min.js"></script>
+  <script defer src="src/core.js"></script>
+  <script defer src="src/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  <header class="site-header" aria-label="产品导航">
+    <a class="brand" href="#top" aria-label="钱都去哪了首页">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" role="img">
+          <path d="M9 12.5h13.2c5.4 0 8.8 3 8.8 7.5s-3.4 7.5-8.8 7.5H12"></path>
+          <path d="m16 6-7 6.5 7 6.5M24 21l7 6.5-7 6.5"></path>
+        </svg>
+      </span>
+      <span>
+        <strong>钱都去哪了</strong>
+        <small>by tphu</small>
+      </span>
+    </a>
+    <div class="local-badge">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 4.6 2.8 8.8 7 10 4.2-1.2 7-5.4 7-10V6l-7-3Z"></path><path d="m9.2 12 1.8 1.8 3.8-4"></path></svg>
+      <span>账单仅在当前浏览器处理</span>
+    </div>
+  </header>
+
+  <main id="main-content">
+    <section id="top" class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy reveal">
+        <p class="eyebrow">PERSONAL MONEY MAP · 本地优先</p>
+        <h1 id="hero-title">把分散账单，整理成一张清楚的<span>钱流地图</span></h1>
+        <p class="hero-lead">导入银行卡、微信支付与支付宝账单。自动排除内部流转、还款与资产调拨，帮你看见真正花掉的钱。</p>
+        <div class="hero-points" aria-label="产品特点">
+          <span>不注册</span><span>不上传账单</span><span>不推销金融产品</span>
+        </div>
+      </div>
+
+      <div class="flow-board reveal reveal-delay" aria-label="资金流口径示意">
+        <div class="flow-board-head">
+          <span>资金流口径</span>
+          <span class="status-dot">本地计算</span>
+        </div>
+        <div class="flow-line flow-in">
+          <span class="flow-symbol" aria-hidden="true">＋</span>
+          <div><strong>真实收入</strong><small>工资、奖金、劳务</small></div>
+          <span>进入现金流</span>
+        </div>
+        <div class="flow-line flow-out">
+          <span class="flow-symbol" aria-hidden="true">－</span>
+          <div><strong>真实消费</strong><small>退款会自动冲减</small></div>
+          <span>计入支出</span>
+        </div>
+        <div class="flow-line flow-neutral">
+          <span class="flow-symbol" aria-hidden="true">↔</span>
+          <div><strong>资金调拨</strong><small>转账、还款、投资</small></div>
+          <span>单独观察</span>
+        </div>
+        <p>同一笔微信/支付宝消费若也出现在银行卡流水中，只保留信息更完整的一条。</p>
+      </div>
+    </section>
+
+    <section id="upload-section" class="upload-shell reveal" aria-labelledby="upload-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-index">01 / 导入</p>
+          <h2 id="upload-title">把账单放进来</h2>
+        </div>
+        <p>支持单独导入，也支持三类账单一起对账。文件越完整，去重与趋势越可靠。</p>
+      </div>
+
+      <form id="upload-form" novalidate>
+        <fieldset class="upload-grid">
+          <legend class="sr-only">选择账单文件</legend>
+
+          <div class="upload-source" data-source="bank">
+            <input class="file-input" type="file" id="bank-file" accept=".pdf,.csv,text/csv,application/pdf">
+            <label class="upload-card" for="bank-file">
+              <span class="source-icon bank-icon" aria-hidden="true">
+                <svg viewBox="0 0 32 32"><path d="m4 13 12-7 12 7"></path><path d="M6 14h20M8 14v10m5-10v10m6-10v10m5-10v10M5 26h22"></path></svg>
+              </span>
+              <span class="upload-copy"><strong>银行卡流水</strong><small>PDF 或 CSV</small></span>
+              <span class="upload-action">选择文件</span>
+            </label>
+            <div class="file-meta">
+              <output id="bank-status" class="file-status">尚未选择</output>
+              <button class="clear-file" type="button" data-clear="bank" hidden>移除</button>
+            </div>
+            <div id="bank-password-wrap" class="password-field" hidden>
+              <label for="bank-password">PDF 打开密码</label>
+              <input id="bank-password" type="password" autocomplete="off" placeholder="仅本次解析使用">
+            </div>
+          </div>
+
+          <div class="upload-source" data-source="wechat">
+            <input class="file-input" type="file" id="wechat-file" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel">
+            <label class="upload-card" for="wechat-file">
+              <span class="source-icon brand-icon" aria-hidden="true"><img src="assets/brands/wechatpay.svg" alt=""></span>
+              <span class="upload-copy"><strong>微信支付</strong><small>官方 XLSX 账单</small></span>
+              <span class="upload-action">选择文件</span>
+            </label>
+            <div class="file-meta">
+              <output id="wechat-status" class="file-status">尚未选择</output>
+              <button class="clear-file" type="button" data-clear="wechat" hidden>移除</button>
+            </div>
+          </div>
+
+          <div class="upload-source" data-source="alipay">
+            <input class="file-input" type="file" id="alipay-file" accept=".csv,text/csv">
+            <label class="upload-card" for="alipay-file">
+              <span class="source-icon brand-icon" aria-hidden="true"><img src="assets/brands/alipay.svg" alt=""></span>
+              <span class="upload-copy"><strong>支付宝</strong><small>官方 CSV 账单</small></span>
+              <span class="upload-action">选择文件</span>
+            </label>
+            <div class="file-meta">
+              <output id="alipay-status" class="file-status">尚未选择</output>
+              <button class="clear-file" type="button" data-clear="alipay" hidden>移除</button>
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="upload-footer">
+          <div class="file-summary">
+            <span id="selected-count">0 个文件</span>
+            <small>建议导入相同日期范围，跨平台去重更准确</small>
+          </div>
+          <div class="upload-buttons">
+            <button id="sample-button" class="button button-quiet" type="button">查看脱敏示例</button>
+            <button id="analyze-button" class="button button-primary" type="submit" disabled>
+              <span>开始分析</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"></path></svg>
+            </button>
+          </div>
+        </div>
+        <div id="progress" class="progress" role="status" aria-live="polite"></div>
+      </form>
+
+      <div class="trust-row">
+        <div><strong>内存中处理</strong><span>刷新页面即清空，不写入本地存储</span></div>
+        <div><strong>本地依赖</strong><span>解析和图表库不从网络加载</span></div>
+        <div><strong>口径透明</strong><span>内部流转、还款、投资与消费分开</span></div>
+      </div>
+    </section>
+
+    <section id="report" class="report" hidden aria-labelledby="report-title">
+      <div class="report-topbar">
+        <div>
+          <p class="section-index">02 / 报告</p>
+          <h2 id="report-title" tabindex="-1">这段时间，钱都去哪了</h2>
+          <p id="report-range" class="report-range"></p>
+        </div>
+        <div class="report-actions">
+          <button id="print-button" class="button button-quiet" type="button">打印报告</button>
+          <button id="reset-button" class="button button-outline" type="button">重新导入</button>
+        </div>
+      </div>
+
+      <div id="quality-strip" class="quality-strip" aria-label="数据质量概览"></div>
+
+      <section class="metric-grid" aria-label="核心指标">
+        <article class="metric metric-primary">
+          <span>净消费</span><strong id="metric-expense">—</strong><small id="metric-expense-note">退款已冲减</small>
+        </article>
+        <article class="metric">
+          <span>真实收入</span><strong id="metric-income">—</strong><small id="metric-income-note">不含内部转入</small>
+        </article>
+        <article class="metric">
+          <span>现金结余</span><strong id="metric-balance">—</strong><small>收入减净消费</small>
+        </article>
+        <article class="metric">
+          <span>结余率</span><strong id="metric-rate">—</strong><small id="metric-rate-note">收入为零时不计算</small>
+        </article>
+      </section>
+
+      <div class="report-grid">
+        <section class="panel panel-wide" aria-labelledby="category-title">
+          <div class="panel-heading"><div><p>SPENDING MAP</p><h3 id="category-title">钱去了哪里</h3></div><span id="category-total"></span></div>
+          <div id="category-chart" class="chart chart-category" role="img" aria-label="消费分类金额横向条形图"></div>
+          <div id="chart-summary" class="chart-summary" aria-label="消费分类文字摘要"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="need-title">
+          <div class="panel-heading"><div><p>FLEXIBILITY</p><h3 id="need-title">消费弹性</h3></div></div>
+          <div id="need-structure" class="need-structure"></div>
+          <p class="panel-note">必要/可选是便于复盘的参考标签，不代表价值判断。</p>
+        </section>
+
+        <section class="panel panel-wide" aria-labelledby="trend-title">
+          <div class="panel-heading"><div><p>MONTHLY FLOW</p><h3 id="trend-title">月度现金流</h3></div><span>收入 · 净消费 · 结余</span></div>
+          <div id="trend-chart" class="chart" role="img" aria-label="月度收入净消费和结余趋势图"></div>
+          <div id="trend-summary" class="sr-only"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="flow-title">
+          <div class="panel-heading"><div><p>SEPARATED FLOWS</p><h3 id="flow-title">未计入消费的资金流</h3></div></div>
+          <div id="separate-flows" class="separate-flows"></div>
+        </section>
+      </div>
+
+      <section class="insight-section" aria-labelledby="insight-title">
+        <div class="section-heading compact">
+          <div><p class="section-index">03 / 洞察</p><h2 id="insight-title">先看这几件事</h2></div>
+          <p>每条结论都附上数据证据，并给出低风险、可选择的下一步。</p>
+        </div>
+        <div id="insight-list" class="insight-list"></div>
+      </section>
+
+      <div class="report-grid secondary-grid">
+        <section class="panel" aria-labelledby="source-title">
+          <div class="panel-heading"><div><p>SOURCES</p><h3 id="source-title">账单来源</h3></div></div>
+          <div id="source-list" class="source-list"></div>
+        </section>
+        <section class="panel" aria-labelledby="anomaly-title">
+          <div class="panel-heading"><div><p>OUTLIERS</p><h3 id="anomaly-title">大额与异常交易</h3></div><span id="anomaly-count"></span></div>
+          <div id="anomaly-list" class="compact-list"></div>
+        </section>
+        <section class="panel" aria-labelledby="recurring-title">
+          <div class="panel-heading"><div><p>RECURRING</p><h3 id="recurring-title">周期性消费候选</h3></div><span>需人工确认</span></div>
+          <div id="recurring-list" class="compact-list"></div>
+        </section>
+      </div>
+
+      <section class="transactions-section" aria-labelledby="transactions-title">
+        <div class="section-heading compact">
+          <div><p class="section-index">04 / 明细</p><h2 id="transactions-title">逐笔核对</h2></div>
+          <p id="transaction-count"></p>
+        </div>
+        <div class="filter-bar">
+          <label><span>搜索</span><input id="transaction-search" type="search" placeholder="商户或说明"></label>
+          <label><span>资金流</span><select id="flow-filter"><option value="">全部</option><option value="expense">消费</option><option value="income">收入</option><option value="refund">退款</option><option value="transfer">内部流转</option><option value="asset">资产变动</option><option value="debt">债务偿还</option></select></label>
+          <label><span>来源</span><select id="source-filter"><option value="">全部</option><option value="bank">银行卡</option><option value="wechat">微信支付</option><option value="alipay">支付宝</option></select></label>
+          <label><span>分类</span><select id="category-filter"><option value="">全部</option></select></label>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <caption>导入并归一化后的交易明细</caption>
+            <thead><tr><th scope="col">日期</th><th scope="col">资金流</th><th scope="col">商户/说明</th><th scope="col">分类</th><th scope="col">来源</th><th scope="col" class="align-right">金额</th></tr></thead>
+            <tbody id="transaction-body"></tbody>
+          </table>
+        </div>
+        <div id="mobile-transactions" class="mobile-transactions"></div>
+      </section>
+
+      <aside class="disclaimer">
+        <strong>关于这份报告</strong>
+        <p>分类与建议基于账单文本和规则推断，仅用于个人记账参考，不构成投资、信贷、税务或其他专业建议。遇到“待确认”或匹配警告时，请以原始账单为准。</p>
+      </aside>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p><strong>钱都去哪了</strong><span>本地优先的个人账单分析工具</span></p>
+    <p>Designed &amp; built by <strong>tphu</strong></p>
+  </footer>
+</body>
+</html>
