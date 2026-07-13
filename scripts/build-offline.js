@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const output = path.join(root, '钱都去哪了-离线版.html');
+const output = path.join(root, 'output', '钱都去哪了-离线版.html');
 const nonce = 'qian-offline-v1';
 
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -53,6 +53,9 @@ const scriptSources = [
   read('vendor/pdf.bundle.min.js'),
   workerPrelude,
   read('src/core.js'),
+  read('src/insights.js'),
+  read('src/budget.js'),
+  read('src/exporter.js'),
   replaceBrandPaths(read('src/app.js')),
 ];
 
@@ -96,5 +99,6 @@ const embeddedScripts = scriptSources
 const licenseTemplate = `<template id="third-party-notices" hidden>\n<pre>${escapeHtml(notices)}</pre>\n</template>`;
 html = html.replace('</body>', () => `${licenseTemplate}\n${embeddedScripts}\n</body>`);
 
+fs.mkdirSync(path.dirname(output), { recursive: true });
 fs.writeFileSync(output, html, 'utf8');
 console.log(`Built ${path.basename(output)} (${(Buffer.byteLength(html) / 1024 / 1024).toFixed(1)} MB)`);

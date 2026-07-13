@@ -2,6 +2,9 @@
   'use strict';
 
   const Core = window.BillAnalyzerCore;
+  const Insights = window.BillAnalyzerInsights;
+  const Budget = window.BillAnalyzerBudget;
+  const Exporter = window.BillAnalyzerExporter;
   const SOURCE_META = {
     bank: { label: '银行卡', icon: null },
     wechat: { label: '微信支付', icon: 'assets/brands/wechatpay.svg' },
@@ -23,9 +26,13 @@
     debt: { label: '债务偿还', sign: '↔' },
   };
   const STATE = {
-    files: { bank: null, wechat: null, alipay: null },
+    files: { bank: [], wechat: [], alipay: [] },
     analysis: null,
+    insights: null,
+    budgetInput: null,
+    budget: null,
     charts: [],
+    activeTab: 'overview',
   };
 
   const elements = {
@@ -34,21 +41,31 @@
     sampleButton: document.getElementById('sample-button'),
     resetButton: document.getElementById('reset-button'),
     printButton: document.getElementById('print-button'),
+    exportButton: document.getElementById('export-button'),
+    themeButton: document.getElementById('theme-button'),
+    reportTabs: document.getElementById('report-tabs'),
     selectedCount: document.getElementById('selected-count'),
     progress: document.getElementById('progress'),
+    fileProgressList: document.getElementById('file-progress-list'),
     report: document.getElementById('report'),
     search: document.getElementById('transaction-search'),
     flowFilter: document.getElementById('flow-filter'),
     sourceFilter: document.getElementById('source-filter'),
     categoryFilter: document.getElementById('category-filter'),
+    budgetForm: document.getElementById('budget-form'),
+    budgetTotal: document.getElementById('budget-total'),
+    budgetCategories: document.getElementById('budget-categories'),
+    budgetClear: document.getElementById('budget-clear'),
+    budgetFeedback: document.getElementById('budget-feedback'),
   };
 
-  if (!Core) {
-    setProgress('核心分析模块未能加载，请确认项目文件完整。', true);
+  if (!Core || !Insights || !Budget || !Exporter) {
+    setProgress('工具模块未能完整加载，请确认文件完整。', true);
     return;
   }
 
   configurePdfWorker();
+  initializeTheme();
   bindUploadInputs();
   bindActions();
 
@@ -75,9 +92,7 @@
       const container = document.querySelector(`[data-source="${source}"]`);
       const card = container.querySelector('.upload-card');
 
-      input.addEventListener('change', () => {
-        if (input.files && input.files[0]) selectFile(source, input.files[0]);
-      });
+      input.addEventListener('change', () => selectFiles(source, input.files));
 
       ['dragenter', 'dragover'].forEach((eventName) => {
         card.addEventListener(eventName, (event) => {
@@ -91,14 +106,11 @@
           container.classList.remove('is-dragging');
         });
       });
-      card.addEventListener('drop', (event) => {
-        const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-        if (file) selectFile(source, file);
-      });
+      card.addEventListener('drop', (event) => selectFiles(source, event.dataTransfer && event.dataTransfer.files));
     });
 
     document.querySelectorAll('[data-clear]').forEach((button) => {
-      button.addEventListener('click', () => clearFile(button.dataset.clear));
+      button.addEventListener('click', () => clearFiles(button.dataset.clear));
     });
   }
 
@@ -110,28 +122,59 @@
     elements.sampleButton.addEventListener('click', runSampleAnalysis);
     elements.resetButton.addEventListener('click', resetApplication);
     elements.printButton.addEventListener('click', () => window.print());
+    elements.exportButton.addEventListener('click', exportCurrentReport);
+    elements.themeButton.addEventListener('click', toggleTheme);
+    elements.reportTabs.addEventListener('click', (event) => {
+      const tab = event.target.closest('[data-report-tab]');
+      if (tab) activateReportTab(tab.dataset.reportTab);
+    });
+    elements.budgetForm.addEventListener('submit', saveBudget);
+    elements.budgetClear.addEventListener('click', clearBudget);
     [elements.search, elements.flowFilter, elements.sourceFilter, elements.categoryFilter].forEach((control) => {
       control.addEventListener(control === elements.search ? 'input' : 'change', renderTransactions);
     });
     window.addEventListener('resize', () => STATE.charts.forEach((chart) => chart.resize()));
   }
 
-  function selectFile(source, file) {
-    const error = validateFile(source, file);
-    if (error) {
-      setProgress(error, true);
+  function selectedEntries() {
+    return Object.entries(STATE.files).flatMap(([source, files]) => files.map((file) => ({ source, file })));
+  }
+
+  function selectFiles(source, fileList) {
+    const incoming = Array.from(fileList || []);
+    if (!incoming.length) return;
+    const valid = [];
+    let firstError = '';
+    incoming.forEach((file) => {
+      const error = validateFile(source, file);
+      if (error) {
+        firstError = firstError || error;
+        return;
+      }
+      const duplicate = STATE.files[source].some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified)
+        || valid.some((item) => item.name === file.name && item.size === file.size && item.lastModified === file.lastModified);
+      if (!duplicate) valid.push(file);
+    });
+    if (!valid.length) {
+      if (firstError) setProgress(firstError, true);
       return;
     }
-    STATE.files[source] = file;
+    const candidate = { ...STATE.files, [source]: STATE.files[source].concat(valid) };
+    const totalBytes = Object.values(candidate).flat().reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > TOTAL_SELECTED_FILE_LIMIT_MIB * 1024 * 1024) {
+      setProgress(`所选文件合计超过 ${TOTAL_SELECTED_FILE_LIMIT_MIB} MiB 限制，请移除部分文件，或导出更短的日期范围后重新导入。`, true);
+      return;
+    }
+    STATE.files[source] = candidate[source];
     const container = document.querySelector(`[data-source="${source}"]`);
     container.classList.add('is-ready');
     const status = document.getElementById(`${source}-status`);
-    status.textContent = `${file.name} · ${formatFileSize(file.size)}`;
+    status.textContent = fileSummary(STATE.files[source]);
     container.querySelector('[data-clear]').hidden = false;
     if (source === 'bank') {
-      document.getElementById('bank-password-wrap').hidden = !file.name.toLowerCase().endsWith('.pdf');
+      document.getElementById('bank-password-wrap').hidden = !STATE.files.bank.some((file) => file.name.toLowerCase().endsWith('.pdf'));
     }
-    setProgress('');
+    setProgress(firstError || '', Boolean(firstError));
     updateFileSummary();
   }
 
@@ -144,8 +187,13 @@
     return '';
   }
 
-  function clearFile(source) {
-    STATE.files[source] = null;
+  function fileSummary(files) {
+    if (files.length === 1) return `${files[0].name} · ${formatFileSize(files[0].size)}`;
+    return `${files.length} 个文件 · ${formatFileSize(files.reduce((sum, file) => sum + file.size, 0))}`;
+  }
+
+  function clearFiles(source) {
+    STATE.files[source] = [];
     const container = document.querySelector(`[data-source="${source}"]`);
     container.classList.remove('is-ready');
     const input = document.getElementById(`${source}-file`);
@@ -160,7 +208,7 @@
   }
 
   function updateFileSummary() {
-    const count = Object.values(STATE.files).filter(Boolean).length;
+    const count = selectedEntries().length;
     elements.selectedCount.textContent = `${count} 个文件`;
     elements.analyzeButton.disabled = count === 0;
   }
@@ -175,10 +223,22 @@
     elements.progress.classList.toggle('is-error', Boolean(isError));
   }
 
+  function updateFileProgress(entry, message, isError = false) {
+    const key = `${entry.source}:${entry.file.name}:${entry.file.lastModified}`;
+    let row = Array.from(elements.fileProgressList.children).find((item) => item.dataset.fileProgress === key);
+    if (!row) {
+      row = document.createElement('li');
+      row.dataset.fileProgress = key;
+      elements.fileProgressList.append(row);
+    }
+    row.textContent = `${SOURCE_META[entry.source].label} · ${entry.file.name}：${message}`;
+    row.classList.toggle('is-error', Boolean(isError));
+  }
+
   async function runUploadedAnalysis() {
-    const selected = Object.entries(STATE.files).filter(([, file]) => file);
+    const selected = selectedEntries();
     if (!selected.length) return;
-    const totalSelectedBytes = selected.reduce((total, [, file]) => total + file.size, 0);
+    const totalSelectedBytes = selected.reduce((total, entry) => total + entry.file.size, 0);
     if (totalSelectedBytes > TOTAL_SELECTED_FILE_LIMIT_MIB * 1024 * 1024) {
       setProgress(`所选文件合计超过 ${TOTAL_SELECTED_FILE_LIMIT_MIB} MiB 限制，请移除部分文件，或导出更短的日期范围后重新导入。`, true);
       return;
@@ -188,16 +248,28 @@
     setProgress('正在读取账单文件…');
     try {
       const parsed = [];
-      for (const [source, file] of selected) {
-        parsed.push(await parseSourceFile(source, file));
+      const fileErrors = [];
+      elements.fileProgressList.replaceChildren();
+      for (const entry of selected) {
+        setProgress(`正在解析 ${parsed.length + fileErrors.length + 1}/${selected.length}：${entry.file.name}`);
+        updateFileProgress(entry, '正在解析');
+        try {
+          parsed.push(await parseSourceFile(entry.source, entry.file));
+          updateFileProgress(entry, '已完成');
+        } catch (error) {
+          const message = normalizeError(error);
+          fileErrors.push({ source: entry.source, fileName: entry.file.name, message });
+          updateFileProgress(entry, `失败：${message}`, true);
+        }
       }
       const records = parsed.flatMap((result) => result.records);
       const parseStats = combineParseStats(parsed);
-      if (!records.length) throw new Error('没有识别到有效交易，请确认文件来自官方账单导出并包含交易明细。');
+      if (!records.length) throw new Error(fileErrors[0] ? fileErrors[0].message : '没有识别到有效交易，请确认文件来自官方账单导出并包含交易明细。');
       setProgress(`已识别 ${records.length} 条有效记录，正在统一口径与跨平台去重…`);
       await nextFrame();
       const analysis = Core.analyzeTransactions(records);
       applyParseStats(analysis, parseStats);
+      analysis.quality.fileErrors = fileErrors;
       showReport(analysis);
       setProgress('');
     } catch (error) {
@@ -225,7 +297,7 @@
   }
 
   function setBusy(isBusy) {
-    elements.analyzeButton.disabled = isBusy || !Object.values(STATE.files).some(Boolean);
+    elements.analyzeButton.disabled = isBusy || selectedEntries().length === 0;
     elements.sampleButton.disabled = isBusy;
     elements.analyzeButton.setAttribute('aria-busy', String(isBusy));
   }
@@ -455,23 +527,36 @@
     };
   }
 
-  function showReport(analysis) {
+  function showReport(analysis, options = {}) {
+    if (options.scroll !== false) STATE.activeTab = 'overview';
     STATE.analysis = analysis;
+    STATE.insights = Insights.analyzeSpendingProfile(analysis, { lastDate: analysis.meta.lastDate });
+    STATE.budgetInput = STATE.budgetInput || Budget.loadBudget();
+    STATE.budget = Budget.calculateBudget(analysis, STATE.budgetInput);
+    disposeCharts();
     elements.report.hidden = false;
+    elements.exportButton.disabled = false;
     renderReportHeader(analysis);
     renderQuality(analysis);
     renderMetrics(analysis);
+    renderBudget();
+    renderMonthComparison();
+    renderChangeDrivers(analysis);
     renderCategoryChart(analysis);
     renderNeedStructure(analysis);
     renderTrendChart(analysis);
     renderSeparateFlows(analysis);
-    renderInsights(analysis);
+    renderInsights(analysis.recommendations.concat(STATE.insights.recommendations));
     renderSources(analysis);
     renderCompactLists(analysis);
+    renderPortrait();
     populateCategoryFilter(analysis);
     renderTransactions();
-    document.getElementById('report-title').focus({ preventScroll: true });
-    elements.report.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    activateReportTab(STATE.activeTab);
+    if (options.scroll !== false) {
+      document.getElementById('report-title').focus({ preventScroll: true });
+      elements.report.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    }
   }
 
   function renderReportHeader(analysis) {
@@ -512,8 +597,257 @@
     setText('metric-rate-note', summary.savingsRate == null ? '本期未识别到真实收入' : `日均净消费 ${formatMoney(summary.dailyAverage)}`);
   }
 
+  function renderMonthComparison() {
+    const container = document.getElementById('month-comparison');
+    const comparison = STATE.insights.monthlyComparison;
+    if (!comparison) {
+      container.replaceChildren(emptyState('至少覆盖两个有效月份后，才会显示环比。'));
+      return;
+    }
+    const title = document.createElement('strong');
+    const detail = document.createElement('span');
+    const note = document.createElement('span');
+    title.textContent = `${comparison.change > 0 ? '+' : comparison.change < 0 ? '−' : ''}${formatMoney(Math.abs(comparison.change))}`;
+    detail.textContent = comparison.changeRate == null
+      ? `${comparison.currentMonth} 对比 ${comparison.previousMonth}`
+      : `较上月 ${comparison.changeRate > 0 ? '增加' : comparison.changeRate < 0 ? '减少' : '持平'} ${Math.abs(comparison.changeRate)}%`;
+    note.textContent = comparison.complete ? '两个完整月份可直接比较' : `当前月份仅覆盖 ${comparison.coverageDays}/${comparison.daysInMonth} 天`;
+    container.replaceChildren(title, detail, note);
+  }
+
+  function renderChangeDrivers(analysis) {
+    const container = document.getElementById('change-drivers');
+    const drivers = analysis.changeDrivers || [];
+    if (!drivers.length) {
+      container.replaceChildren(emptyState('暂无可解释的分类变化。'));
+      return;
+    }
+    container.replaceChildren(...drivers.map((item) => {
+      const row = document.createElement('div');
+      row.className = 'change-driver';
+      const label = document.createElement('span');
+      label.textContent = `${item.name} · ${formatMoney(item.current)} / ${formatMoney(item.previous)}`;
+      const change = document.createElement('span');
+      change.textContent = formatSignedMoney(item.change);
+      row.append(label, change);
+      return row;
+    }));
+  }
+
+  function renderBudget() {
+    const budget = STATE.budget;
+    const input = STATE.budgetInput || { total: 0, categories: {} };
+    const metric = document.getElementById('metric-budget');
+    const metricNote = document.getElementById('metric-budget-note');
+    elements.budgetTotal.value = input.total || '';
+    if (!budget || !budget.total) {
+      metric.textContent = '未设置';
+      metricNote.textContent = '可设置总预算或分类预算';
+    } else {
+      metric.textContent = `${budget.progress}%`;
+      metricNote.textContent = budget.remaining >= 0 ? `剩余 ${formatMoney(budget.remaining)}` : `超出 ${formatMoney(Math.abs(budget.remaining))}`;
+    }
+
+    const categories = STATE.analysis.categories || [];
+    elements.budgetCategories.replaceChildren(...categories.map((category) => {
+      const row = document.createElement('label');
+      row.className = 'budget-category';
+      const copy = document.createElement('span');
+      copy.textContent = category.name;
+      const note = document.createElement('small');
+      const categoryBudget = budget && budget.categories[category.id];
+      note.textContent = categoryBudget ? `已花 ${formatMoney(categoryBudget.spent)}` : `已花 ${formatMoney(category.amount)}`;
+      copy.append(note);
+      const field = document.createElement('input');
+      field.type = 'number';
+      field.inputMode = 'decimal';
+      field.min = '0';
+      field.step = '50';
+      field.dataset.budgetCategory = category.id;
+      field.value = input.categories[category.id] || '';
+      field.setAttribute('aria-label', `${category.name}预算`);
+      row.append(copy, field);
+      return row;
+    }));
+  }
+
+  function saveBudget(event) {
+    event.preventDefault();
+    const categories = {};
+    elements.budgetCategories.querySelectorAll('[data-budget-category]').forEach((input) => {
+      categories[input.dataset.budgetCategory] = input.value;
+    });
+    STATE.budgetInput = Budget.normalizeBudget({ total: elements.budgetTotal.value, categories });
+    const saved = Budget.saveBudget(STATE.budgetInput);
+    STATE.budget = Budget.calculateBudget(STATE.analysis, STATE.budgetInput);
+    renderBudget();
+    elements.budgetFeedback.textContent = saved
+      ? '预算已保存到当前浏览器会话，关闭会话后会自动清除。'
+      : '浏览器未允许会话保存；预算会保留到当前页面关闭前。';
+  }
+
+  function clearBudget() {
+    Budget.clearBudget();
+    STATE.budgetInput = { total: 0, categories: {} };
+    STATE.budget = Budget.calculateBudget(STATE.analysis, STATE.budgetInput);
+    renderBudget();
+    elements.budgetFeedback.textContent = '本次浏览器会话中的预算已清除。';
+  }
+
+  function exportCurrentReport() {
+    if (!STATE.analysis) return;
+    if (!window.confirm('Excel 将包含交易明细。请妥善保管，确认导出吗？')) return;
+    try {
+      const suffix = STATE.analysis.meta.lastDate || '账单分析';
+      Exporter.exportWorkbook(STATE.analysis, STATE.insights, STATE.budget, window.XLSX, `钱都去哪了-${suffix}.xlsx`);
+      setProgress('Excel 报告已导出。');
+    } catch (error) {
+      setProgress(normalizeError(error), true);
+    }
+  }
+
+  function activateReportTab(name) {
+    const target = ['overview', 'portrait', 'details'].includes(name) ? name : 'overview';
+    STATE.activeTab = target;
+    elements.reportTabs.querySelectorAll('[data-report-tab]').forEach((tab) => {
+      const active = tab.dataset.reportTab === target;
+      tab.setAttribute('aria-selected', String(active));
+      tab.classList.toggle('is-active', active);
+    });
+    document.querySelectorAll('[data-report-panel]').forEach((panel) => {
+      const active = panel.dataset.reportPanel === target;
+      panel.hidden = !active;
+      panel.classList.toggle('is-active', active);
+    });
+    if (target === 'overview' || target === 'portrait') {
+      window.setTimeout(() => STATE.charts.forEach((chart) => chart.resize()), 0);
+    }
+  }
+
+  function initializeTheme() {
+    const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.dataset.theme = prefersDark ? 'dark' : 'light';
+    elements.themeButton.setAttribute('aria-pressed', String(prefersDark));
+  }
+
+  function toggleTheme() {
+    const dark = document.documentElement.dataset.theme !== 'dark';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    elements.themeButton.setAttribute('aria-pressed', String(dark));
+    if (STATE.analysis) showReport(STATE.analysis, { scroll: false });
+  }
+
+  function renderPortrait() {
+    const profile = STATE.insights;
+    const tags = document.getElementById('portrait-tags');
+    if (!profile.sample.sufficient) {
+      tags.replaceChildren(emptyState(`目前有 ${profile.sample.expenseCount} 笔消费、${profile.sample.temporalCount} 笔带时间记录，需覆盖至少 28 天后再生成习惯标签。`));
+    } else if (!profile.habits.length) {
+      tags.replaceChildren(emptyState('数据已足够，但暂未发现重复且稳定的消费习惯。'));
+    } else {
+      tags.replaceChildren(...profile.habits.map((habit) => {
+        const item = document.createElement('span');
+        item.textContent = `${habit.label} · ${habit.evidence}`;
+        return item;
+      }));
+    }
+    renderWeekPattern(profile.weekPattern);
+    renderTimeHeatmap(profile.timeProfile);
+    renderMealScenes(profile.mealScenes);
+    renderMerchantRanking(profile.merchants);
+    renderInsightCards(document.getElementById('profile-advice'), profile.recommendations, '画像');
+  }
+
+  function renderWeekPattern(pattern) {
+    const container = document.getElementById('week-pattern');
+    const labels = { weekday: '工作日', weekend: '周末' };
+    container.replaceChildren(...Object.entries(pattern).map(([id, item]) => {
+      const row = document.createElement('div');
+      row.className = 'week-row';
+      const label = document.createElement('span');
+      label.textContent = `${labels[id]} · ${item.count} 笔`;
+      const value = document.createElement('strong');
+      value.textContent = `${formatMoney(item.amount)} · 平均 ${formatMoney(item.average)}`;
+      row.append(label, value);
+      return row;
+    }));
+  }
+
+  function renderTimeHeatmap(timeProfile) {
+    const container = document.getElementById('time-heatmap');
+    const summary = document.getElementById('time-summary');
+    const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
+    const maximum = Math.max(0, ...timeProfile.heatmap.map((item) => item.amount));
+    const cells = new Map(timeProfile.heatmap.map((item) => [`${item.weekday}:${item.bucket}`, item]));
+    const nodes = [document.createElement('span')];
+    weekdays.forEach((day) => { const node = document.createElement('span'); node.textContent = day; nodes.push(node); });
+    Insights.TIME_BUCKETS.forEach((bucket) => {
+      const label = document.createElement('span');
+      label.textContent = bucket.label;
+      nodes.push(label);
+      weekdays.forEach((_, index) => {
+        const item = cells.get(`${index + 1}:${bucket.id}`) || { amount: 0, count: 0 };
+        const node = document.createElement('span');
+        const ratio = maximum ? item.amount / maximum : 0;
+        node.className = 'heat-cell';
+        node.dataset.level = String(Math.round(ratio * 4));
+        node.style.setProperty('--heat', String(ratio));
+        node.textContent = item.amount ? compactMoney(item.amount) : '—';
+        node.setAttribute('aria-label', `星期${weekdays[index]} ${bucket.label}：${formatMoney(item.amount)}，${item.count} 笔`);
+        nodes.push(node);
+      });
+    });
+    container.replaceChildren(...nodes);
+    summary.textContent = `缺少时间的交易 ${timeProfile.missingTimeCount} 笔，不参与热力图。`;
+  }
+
+  function renderMealScenes(scenes) {
+    const container = document.getElementById('meal-scenes');
+    if (!scenes.length) {
+      container.replaceChildren(emptyState('没有识别到明确的餐饮场景。'));
+      return;
+    }
+    container.replaceChildren(...scenes.map((item) => {
+      const row = document.createElement('div');
+      row.className = 'meal-row';
+      const label = document.createElement('span');
+      label.textContent = `${item.label} · ${item.count} 笔`;
+      const value = document.createElement('strong');
+      value.textContent = formatMoney(item.amount);
+      row.append(label, value);
+      return row;
+    }));
+  }
+
+  function renderMerchantRanking(merchants) {
+    const container = document.getElementById('merchant-ranking');
+    if (!merchants.length) {
+      container.replaceChildren(emptyState('至少出现两次的商家会显示在这里。'));
+      return;
+    }
+    container.replaceChildren(...merchants.slice(0, 8).map((item, index) => {
+      const row = document.createElement('div');
+      row.className = 'merchant-row';
+      const rank = document.createElement('span');
+      rank.className = 'merchant-rank';
+      rank.textContent = String(index + 1);
+      const copy = document.createElement('div');
+      copy.className = 'merchant-copy';
+      const name = document.createElement('strong');
+      name.textContent = item.name;
+      const note = document.createElement('small');
+      note.textContent = `${item.count} 次 · 平均 ${formatMoney(item.average)} · 最近 ${item.latestDate}`;
+      copy.append(name, note);
+      const amount = document.createElement('strong');
+      amount.textContent = formatMoney(item.amount);
+      row.append(rank, copy, amount);
+      return row;
+    }));
+  }
+
   function renderCategoryChart(analysis) {
     const categories = analysis.categories.slice(0, 9);
+    const theme = chartTheme();
     setText('category-total', `${analysis.summary.expenseCount} 笔 · ${formatMoney(analysis.summary.grossExpense)}`);
     const chartElement = document.getElementById('category-chart');
     const summary = document.getElementById('chart-summary');
@@ -542,14 +876,14 @@
       xAxis: { type: 'value', show: false },
       yAxis: {
         type: 'category', inverse: true, data: categories.map((item) => item.name),
-        axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: '#35423a', fontSize: 12, margin: 14 },
+        axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: theme.textSoft, fontSize: 12, margin: 14 },
       },
       series: [{
         type: 'bar', data: categories.map((item, index) => ({
           value: item.amount,
-          itemStyle: { color: index === 0 ? '#0c674b' : index < 4 ? '#4d8873' : '#91aa9d', borderRadius: [0, 6, 6, 0] },
+          itemStyle: { color: index === 0 ? theme.primary : index < 4 ? theme.accent : theme.lineStrong, borderRadius: [0, 6, 6, 0] },
         })), barMaxWidth: 22,
-        label: { show: true, position: 'right', color: '#667169', fontFamily: 'monospace', formatter: (params) => compactMoney(params.value) },
+        label: { show: true, position: 'right', color: theme.muted, fontFamily: 'monospace', formatter: (params) => compactMoney(params.value) },
       }],
       tooltip: { trigger: 'axis', valueFormatter: (value) => formatMoney(value) },
     });
@@ -585,6 +919,7 @@
   function renderTrendChart(analysis) {
     const chartElement = document.getElementById('trend-chart');
     const months = analysis.monthly.filter((item) => item.month !== '日期待确认');
+    const theme = chartTheme();
     setText('trend-summary', months.map((item) => `${item.month} 收入${formatMoney(item.income)}，净消费${formatMoney(item.netExpense)}，结余${formatMoney(item.balance)}`).join('；'));
     if (!window.echarts || !months.length) {
       chartElement.hidden = true;
@@ -595,11 +930,11 @@
     chart.setOption({
       animationDuration: 520,
       aria: { enabled: true, decal: { show: true }, description: '按月比较真实收入、净消费和现金结余。' },
-      color: ['#0c674b', '#ad6426', '#315e77'],
-      legend: { data: ['真实收入', '净消费', '现金结余'], top: 0, textStyle: { color: '#667169' } },
+      color: [theme.primary, theme.warning, theme.accent],
+      legend: { data: ['真实收入', '净消费', '现金结余'], top: 0, textStyle: { color: theme.muted } },
       grid: { left: 16, right: 18, top: 48, bottom: 18, containLabel: true },
-      xAxis: { type: 'category', data: months.map((item) => item.month), axisLine: { lineStyle: { color: '#d7d1c5' } }, axisTick: { show: false }, axisLabel: { color: '#667169' } },
-      yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: '#e4dfd4' } }, axisLabel: { color: '#667169', formatter: compactMoney } },
+      xAxis: { type: 'category', data: months.map((item) => item.month), axisLine: { lineStyle: { color: theme.line } }, axisTick: { show: false }, axisLabel: { color: theme.muted } },
+      yAxis: { type: 'value', axisLine: { show: false }, splitLine: { lineStyle: { color: theme.line } }, axisLabel: { color: theme.muted, formatter: compactMoney } },
       tooltip: { trigger: 'axis', valueFormatter: (value) => formatMoney(value) },
       series: [
         { name: '真实收入', type: 'bar', data: months.map((item) => item.income), barMaxWidth: 24, itemStyle: { borderRadius: [5, 5, 0, 0] } },
@@ -627,15 +962,22 @@
     }));
   }
 
-  function renderInsights(analysis) {
-    const container = document.getElementById('insight-list');
-    container.replaceChildren(...analysis.recommendations.map((insight, index) => {
+  function renderInsights(insights) {
+    renderInsightCards(document.getElementById('insight-list'), insights, '发现');
+  }
+
+  function renderInsightCards(container, insights, prefix) {
+    if (!insights.length) {
+      container.replaceChildren(emptyState('当前没有足够依据生成新的建议。'));
+      return;
+    }
+    container.replaceChildren(...insights.map((insight, index) => {
       const card = document.createElement('article');
       card.className = 'insight-card';
       card.dataset.tone = insight.tone;
       const kicker = document.createElement('div');
       kicker.className = 'insight-kicker';
-      kicker.textContent = `发现 ${String(index + 1).padStart(2, '0')}`;
+      kicker.textContent = `${prefix} ${String(index + 1).padStart(2, '0')}`;
       const title = document.createElement('h3'); title.textContent = insight.title;
       const evidence = document.createElement('p'); evidence.className = 'insight-evidence'; evidence.textContent = insight.evidence;
       const impact = document.createElement('p'); impact.className = 'insight-impact'; impact.textContent = insight.impact;
@@ -809,6 +1151,25 @@
   function formatSignedMoney(value) { const number = Number(value || 0); return `${number > 0 ? '+' : number < 0 ? '−' : ''}${formatMoney(Math.abs(number))}`; }
   function compactMoney(value) { const number = Number(value || 0); return Math.abs(number) >= 10000 ? `${(number / 10000).toFixed(1)}万` : Math.round(number).toLocaleString('zh-CN'); }
 
+  function chartTheme() {
+    const styles = window.getComputedStyle(document.documentElement);
+    const color = (name) => styles.getPropertyValue(name).trim();
+    return {
+      primary: color('--primary'),
+      accent: color('--accent'),
+      warning: color('--warning'),
+      line: color('--line'),
+      lineStrong: color('--line-strong'),
+      muted: color('--muted'),
+      textSoft: color('--text-soft'),
+    };
+  }
+
+  function disposeCharts() {
+    STATE.charts.forEach((chart) => chart.dispose());
+    STATE.charts = [];
+  }
+
   function createChart(element) {
     const existing = window.echarts.getInstanceByDom(element);
     if (existing) existing.dispose();
@@ -819,14 +1180,19 @@
 
   function resetApplication() {
     STATE.analysis = null;
-    STATE.charts.forEach((chart) => chart.dispose());
-    STATE.charts = [];
+    STATE.insights = null;
+    STATE.budget = null;
+    STATE.budgetInput = null;
+    STATE.activeTab = 'overview';
+    disposeCharts();
     elements.report.hidden = true;
-    Object.keys(STATE.files).forEach(clearFile);
+    elements.exportButton.disabled = true;
+    Object.keys(STATE.files).forEach(clearFiles);
     elements.search.value = '';
     elements.flowFilter.value = '';
     elements.sourceFilter.value = '';
     elements.categoryFilter.replaceChildren(new Option('全部', ''));
+    elements.fileProgressList.replaceChildren();
     setProgress('');
     document.getElementById('upload-title').scrollIntoView({ behavior: 'auto', block: 'start' });
   }

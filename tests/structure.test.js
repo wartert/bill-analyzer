@@ -55,6 +55,51 @@ test('main page includes accessibility and privacy essentials', () => {
   assert.match(css, /@media \(max-width: 767px\)/);
 });
 
+test('V3 page exposes fresh report navigation and product actions', () => {
+  const html = read('index.html');
+
+  assert.match(html, /id="theme-button"/);
+  assert.match(html, /id="export-button"/);
+  assert.match(html, /id="report-tabs"/);
+  assert.match(html, /data-report-tab="overview"/);
+  assert.match(html, /data-report-tab="portrait"/);
+  assert.match(html, /data-report-tab="details"/);
+  assert.match(html, /id="budget-form"/);
+  assert.match(html, /id="budget-categories"/);
+  assert.match(html, /id="time-heatmap"/);
+  assert.match(html, /id="merchant-ranking"/);
+  assert.match(html, /id="profile-advice"/);
+  assert.match(html, /<input[^>]+type="file"[^>]+multiple/u);
+});
+
+test('V3 runtime modules load before the application in every build', () => {
+  const html = read('index.html');
+  const expected = ['src/core.js', 'src/insights.js', 'src/budget.js', 'src/exporter.js', 'src/app.js'];
+  const positions = expected.map((file) => html.indexOf(file));
+
+  assert.ok(positions.every((position) => position >= 0));
+  assert.deepEqual(positions, positions.slice().sort((left, right) => left - right));
+
+  const staticBuilder = read('scripts/build-static.js');
+  const offlineBuilder = read('scripts/build-offline.js');
+  expected.forEach((file) => {
+    assert.match(staticBuilder, new RegExp(file.replace('.', '\\.')));
+    assert.match(offlineBuilder, new RegExp(file.replace('.', '\\.')));
+  });
+});
+
+test('V3 styles provide fresh light and dark responsive hooks', () => {
+  const css = read('styles.css');
+
+  assert.match(css, /color-scheme:\s*light/);
+  assert.match(css, /\[data-theme="dark"\]/);
+  assert.match(css, /@media \(max-width: 767px\)/);
+  assert.match(css, /@media \(max-width: 430px\)/);
+  assert.match(css, /prefers-reduced-motion/);
+  assert.match(css, /:focus-visible/);
+  assert.match(css, /\.mobile-transactions/);
+});
+
 test('legacy author name is absent from active product sources', () => {
   const files = ['index.html', 'styles.css', 'src/app.js', 'src/core.js'];
 
@@ -66,7 +111,7 @@ test('legacy author name is absent from active product sources', () => {
 test('compatibility entry, launcher and privacy documentation are present', () => {
   const compatibility = read('share_bill_analyzer.html');
   const readme = read('README.md');
-  const launcher = read('start.py');
+  const launcher = read('tools/start.py');
   const ignores = read('.gitignore');
 
   assert.match(compatibility, /钱都去哪了/);
@@ -80,11 +125,11 @@ test('compatibility entry, launcher and privacy documentation are present', () =
   assert.doesNotMatch(launcher, /https?:\/\/(?!127\.0\.0\.1)/);
   assert.match(ignores, /\*\.pdf/);
   assert.match(ignores, /\*\.xlsx/);
-  assert.match(ignores, /analysis_data\.json/);
+  assert.match(ignores, /output\/analysis_data\.json/);
 });
 
 test('active Python tools contain no identity, password or private file defaults', () => {
-  const source = ['analyze_all.py', 'parse_zhongyuan.py'].map(read).join('\n');
+  const source = ['tools/analyze_all.py', 'tools/parse_zhongyuan.py'].map(read).join('\n');
 
   assert.doesNotMatch(source, /126913/);
   assert.doesNotMatch(source, /胡天鹏/);
@@ -95,7 +140,7 @@ test('active Python tools contain no identity, password or private file defaults
 
 test('report is visible before charts are initialized', () => {
   const app = read('src/app.js');
-  const showReport = app.match(/function showReport\(analysis\) \{([\s\S]*?)\n  \}/)[1];
+  const showReport = app.match(/function showReport\(analysis, options = \{\}\) \{([\s\S]*?)\n  \}/)[1];
 
   assert.ok(showReport.indexOf('elements.report.hidden = false') < showReport.indexOf('renderCategoryChart(analysis)'));
 });
@@ -176,12 +221,14 @@ test('upload budgets protect mobile memory and parse selected files sequentially
   assert.match(runUploadedAnalysis, /TOTAL_SELECTED_FILE_LIMIT_MIB/u);
   assert.match(runUploadedAnalysis, /更短[^。]*日期范围/u);
   assert.ok(runUploadedAnalysis.indexOf('TOTAL_SELECTED_FILE_LIMIT_MIB') < runUploadedAnalysis.indexOf('parseSourceFile'));
-  assert.match(runUploadedAnalysis, /for \(const \[source, file\] of selected\)/u);
+  assert.match(app, /function selectedEntries\(\)/u);
+  assert.match(runUploadedAnalysis, /for \(const entry of selected\)/u);
+  assert.match(runUploadedAnalysis, /updateFileProgress\(entry/u);
   assert.doesNotMatch(runUploadedAnalysis, /Promise\.all/u);
 });
 
 test('offline build emits one self-contained privacy-safe HTML file', () => {
-  const output = '钱都去哪了-离线版.html';
+  const output = 'output/钱都去哪了-离线版.html';
   const pkg = JSON.parse(read('package.json'));
   const builder = read('scripts/build-offline.js');
 
@@ -199,7 +246,7 @@ test('offline build emits one self-contained privacy-safe HTML file', () => {
   assert.equal((html.match(/<!doctype html>/giu) || []).length, 1);
   assert.equal((html.match(/^<html lang="zh-CN">$/gmu) || []).length, 1);
   assert.equal((html.match(/^<\/html>$/gmu) || []).length, 1);
-  assert.equal(inlineScripts.length, 7);
+  assert.equal(inlineScripts.length, 10);
   inlineScripts.forEach((source, index) => {
     assert.doesNotThrow(() => new vm.Script(source, { filename: `offline-inline-${index}.js` }));
   });
